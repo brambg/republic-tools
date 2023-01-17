@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "republic-tools"
+version = "0.1.0"
+description = ""
+authors = ["Bram Buitendijk <bram.buitendijk@di.huc.knaw.nl>"]
+readme = "README.md"
+packages = [{include = "republic_tools"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+spacy = "^3.4.4"
+icecream = "^2.1.3"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
