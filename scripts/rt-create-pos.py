@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List
 
 import spacy as spacy
+from icecream import ic
 
 spacy_core = "nl_core_news_lg"
 text_store_path = 'data/1728-textstore.json'
@@ -98,23 +99,34 @@ def main():
         for token in sentence:
             x = token.text_with_ws.replace("\n", "§")
             # ic(x)
-            word = token.text.strip()
-            pos_token = POSToken(word=word, lemma=token.lemma_.strip(), pos=token.pos_)
-            input_doc.tokens.append(pos_token)
+            word = token.text.strip().strip('#')
+            if word:
+                lemma = token.lemma_.strip()
+                if not lemma:
+                    ic(word)
+                    lemma = word
+                    ic(lemma)
+                pos = token.pos_
+                if not pos:
+                    raise Exception(
+                        f"lemma ({lemma}) or pos ({pos}) empty for word ({word}) after {input_doc.tokens[-3].word} {input_doc.tokens[-2].word} {input_doc.tokens[-1].word}")
+                pos_token = POSToken(word=word, lemma=lemma, pos=pos)
 
-            if token.text_with_ws == "\n ":  # last token of line
-                line = " ".join([t.word for t in input_doc.tokens[line_start:token_index]])
-                input_doc.spans.append(
-                    Span("l", line_start, token_index, parameters={"anchor": anchor_number, "text": line}))
-                # ic(line)
-                anchor_number += 1
-                line_start = token_index
+                input_doc.tokens.append(pos_token)
 
-            # if token.text_with_ws == "\n":  # page ends
-            #     input_doc.spans.append(Span("p", page_start, token_index - 1))
-            #     page_start = token_index
+                if token.text_with_ws == "\n ":  # last token of line
+                    line = " ".join([t.word for t in input_doc.tokens[line_start:token_index]])
+                    input_doc.spans.append(
+                        Span("l", line_start, token_index, parameters={"anchor": anchor_number, "text": line}))
+                    # ic(line)
+                    anchor_number += 1
+                    line_start = token_index
 
-            token_index += 1
+                # if token.text_with_ws == "\n":  # page ends
+                #     input_doc.spans.append(Span("p", page_start, token_index - 1))
+                #     page_start = token_index
+
+                token_index += 1
 
         sentence_end = token_index
         if sentence_end > sentence_start:
