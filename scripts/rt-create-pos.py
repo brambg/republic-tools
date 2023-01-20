@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 import json
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Dict, List, Any
 
 import spacy as spacy
 from icecream import ic
+from loguru import logger
 
 spacy_core = "nl_core_news_lg"
-text_store_path = 'data/1728-textstore.json'
-annotation_store_path = 'data/1728-annotationstore-full.json'
+text_store_path = 'data/1728-textstore-220718.json'
+annotation_store_path = 'data/1728-annotationstore-220718.json'
 
 
 @dataclass
@@ -33,56 +34,34 @@ class BlackLabInputDocument:
     spans: List[Span] = field(default_factory=list)
 
 
-def export(input_doc, path):
-    print(f"- exporting to {path} ...", end="", flush=True)
-    with open(path, "w") as f:
-        f.write("DOC_START\n")
-        for k, v in input_doc.metadata.items():
-            f.write(f"  METADATA {k} {v}\n")
-        f.write("  FIELD_START contents\n")
-
-        number_of_tokens = len(input_doc.tokens)
-        for i, token in enumerate(input_doc.tokens):
-            f.write(f"    VAL word {token.word}\n")
-            f.write(f"    VAL lemma {token.lemma}\n")
-            f.write(f"    VAL pos {token.pos}\n")
-            if i < number_of_tokens - 1:
-                f.write("    ADVANCE 1\n")
-
-        for span in input_doc.spans:
-            f.write(f"    SPAN {span.tag} {span.start_token_index} {span.end_token_index}")
-            for k, v in span.parameters.items():
-                f.write(f" {k} {v}")
-            f.write("\n")
-
-        f.write("  FIELD_END\n")
-        f.write("DOC_END\n")
-    print()
+class ComplexHandler(json.JSONEncoder):
+    def default(self, o: Any) -> Any:
+        if isinstance(o, POSToken) or isinstance(o, BlackLabInputDocument) or isinstance(o, Span):
+            return o.__dict__
+        else:
+            return json.JSONEncoder.default(self, o)
 
 
-def add_newline(l: str) -> str:
-    return l if l.endswith("\n") else f"{l}\n"
-
-
+@logger.catch
 def main():
     nlp = spacy.load(spacy_core)
 
-    print(f"- reading {annotation_store_path} ...", end="", flush=True)
+    logger.info(f"- reading {annotation_store_path} ...", end="", flush=True)
     with open(annotation_store_path) as f:
         annotations = json.load(f)
-    print(f" {len(annotations)} annotations read.")
-    line_annotations = [a for a in annotations if a["label"] == "lines"]
+    logger.info(f" {len(annotations)} annotations read.")
+    line_annotations = [a for a in annotations if a["type"] == "line"]
     line_ids = {}
     for la in line_annotations:
         line_idx = la["begin_anchor"]
         line_id = la["id"]
         line_ids[line_idx] = line_id
 
-    print(f"- reading {text_store_path} ...", end="", flush=True)
+    logger.info(f"- reading {text_store_path} ...", end="", flush=True)
     with open(text_store_path) as f:
         text_store = json.load(f)
         lines = text_store['_resources'][0]['_ordered_segments']
-    print(f" {len(lines)} lines read.")
+    logger.info(f" {len(lines)} lines read.")
     fixed_lines = [l.replace("\n", " ") for l in lines]
 
     selection = fixed_lines  # [0:1000]
@@ -94,15 +73,15 @@ def main():
         line_idx_for_ending_offset[offset] = i
     text = ' '.join(selection)
     nlp.max_length = len(text)
-    print(f"- spacy: processing {nlp.max_length} chars ...", end="", flush=True)
+    logger.info(f"- spacy: processing {nlp.max_length} chars ...", end="", flush=True)
     doc = nlp(text)
-    print()
 
     input_doc = BlackLabInputDocument()
     input_doc.metadata["title"] = "republic-1728"
     token_index = 0
     line_start = token_index
     anchor_number = 0
+    token_spans_per_anchor = {}
     # page_start = token_index
     for sentence in doc.sents:
         sentence_start = token_index
@@ -130,6 +109,7 @@ def main():
                 # ic(line)
                 # x = f"{line_ids[line_idx]} {line}"
                 # ic(x)
+                token_spans_per_anchor[anchor_number] = (line_start, token_index)
                 anchor_number += 1
                 line_start = token_index
 
@@ -138,8 +118,88 @@ def main():
                 #     page_start = token_index
 
         add_sentence_span(input_doc, sentence_start, token_index)
+
+    add_attendant_spans(annotations, input_doc, token_spans_per_anchor)
+    add_session_spans(annotations, input_doc, token_spans_per_anchor)
     # ic(input_doc)
     export(input_doc, "out/input.cif")
+    export_json(input_doc)
+
+
+def export_json(input_doc):
+    path = 'out/out.json'
+    logger.info(f"writing to {path}")
+    with open(path, "w") as f:
+        json.dump(obj=input_doc, fp=f, indent=4, cls=ComplexHandler)
+
+
+def export(input_doc, path):
+    logger.info(f"- exporting to {path} ...", end="", flush=True)
+    with open(path, "w") as f:
+        f.write("DOC_START\n")
+        for k, v in input_doc.metadata.items():
+            f.write(f"  METADATA {k} {v}\n")
+        f.write("  FIELD_START contents\n")
+
+        number_of_tokens = len(input_doc.tokens)
+        for i, token in enumerate(input_doc.tokens):
+            f.write(f"    VAL word {token.word}\n")
+            f.write(f"    VAL lemma {token.lemma}\n")
+            f.write(f"    VAL pos {token.pos}\n")
+            if i < number_of_tokens - 1:
+                f.write("    ADVANCE 1\n")
+
+        for span in input_doc.spans:
+            f.write(f"    SPAN {span.tag} {span.start_token_index} {span.end_token_index}")
+            for k, v in span.parameters.items():
+                if isinstance(v, str):
+                    value = v.replace(" ", "_").replace("#", "_")
+                else:
+                    value = v
+                if value != "":
+                    f.write(f" {k} {value}")
+            f.write("\n")
+
+        f.write("  FIELD_END\n")
+        f.write("DOC_END\n")
+
+
+def add_newline(l: str) -> str:
+    return l if l.endswith("\n") else f"{l}\n"
+
+
+def add_attendant_spans(annotations, input_doc, token_spans_per_anchor):
+    attendant_annotations = [a for a in annotations if a["type"] == "attendant"]
+    for aa in attendant_annotations:
+        a_id = aa["id"]
+        begin_anchor = aa["begin_anchor"]
+        end_anchor = aa["end_anchor"]
+        if begin_anchor in token_spans_per_anchor and end_anchor in token_spans_per_anchor:
+            start_token = token_spans_per_anchor[begin_anchor][0]
+            end_token = token_spans_per_anchor[end_anchor][1]
+            metadata = aa["metadata"]
+            metadata["id"] = a_id
+            input_doc.spans.append(
+                Span("attendant", start_token, end_token,
+                     parameters=metadata))
+
+
+def add_session_spans(annotations, input_doc, token_spans_per_anchor):
+    session_annotations = [a for a in annotations if a["type"] == "session"]
+    for aa in session_annotations:
+        begin_anchor = aa["begin_anchor"]
+        end_anchor = aa["end_anchor"]
+        if begin_anchor in token_spans_per_anchor and end_anchor in token_spans_per_anchor:
+            start_token = token_spans_per_anchor[begin_anchor][0]
+            if end_anchor not in token_spans_per_anchor:
+                ic(aa, token_spans_per_anchor)
+            end_token = token_spans_per_anchor[end_anchor][1]
+            parameters = aa["metadata"]
+            parameters.pop("resolution_ids")
+            parameters.pop("text_page_num")
+            input_doc.spans.append(
+                Span("session", start_token, end_token,
+                     parameters=parameters))
 
 
 def add_sentence_span(input_doc, sentence_start, token_index):
