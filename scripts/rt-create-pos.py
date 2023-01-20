@@ -132,20 +132,27 @@ def add_annotation_spans(input_doc, annotations, token_spans_per_anchor):
     add_spans(annotations=annotations, input_doc=input_doc, token_spans_per_anchor=token_spans_per_anchor,
               annotation_type="resolution", span_tag="resolution", parameter_func=resolution_parameters)
 
+    add_spans(annotations=annotations, input_doc=input_doc, token_spans_per_anchor=token_spans_per_anchor,
+              annotation_type="reviewed", span_tag="reviewed", parameter_func=reviewed_parameters)
+
 
 def calculate_pos(nlp, selection):
     text = ' '.join(selection)
     nlp.max_length = len(text)
-    logger.info(f"spacy: processing {nlp.max_length} chars ...")
+    logger.info(f"spacy: processing {nlp.max_length:,} chars ...")
     doc = nlp(text)
     return doc
 
 
-def index_line_ending_offset(selection):
+def index_line_ending_offset(lines):
     line_idx_for_ending_offset = {}
     offset = 0
-    for i, line in enumerate([l for l in selection if l != "\n"]):
-        offset += len(line) + 1
+    last_line_idx = len(lines) - 1
+    for i, line in enumerate(lines):
+        if i < last_line_idx:
+            offset += len(line) + 1
+        else:
+            offset += len(line)
         line_idx_for_ending_offset[offset] = i
     return line_idx_for_ending_offset
 
@@ -155,7 +162,7 @@ def load_text_lines():
     with open(text_store_path) as f:
         text_store = json.load(f)
         lines = text_store['_resources'][0]['_ordered_segments']
-    logger.info(f" {len(lines)} lines read.")
+    logger.info(f" {len(lines):,} lines read.")
     return lines
 
 
@@ -163,7 +170,7 @@ def load_annotations():
     logger.info(f"reading {annotation_store_path} ...")
     with open(annotation_store_path) as f:
         annotations = json.load(f)
-    logger.info(f" {len(annotations)} annotations read.")
+    logger.info(f" {len(annotations):,} annotations read.")
     line_annotations = [a for a in annotations if a["type"] == "line"]
     line_ids = {}
     for la in line_annotations:
@@ -216,9 +223,9 @@ def add_newline(l: str) -> str:
 
 
 def add_spans(annotations, input_doc, token_spans_per_anchor, annotation_type, span_tag, parameter_func):
-    attendant_annotations = [a for a in annotations if a["type"] == annotation_type]
-    logger.info(f"{len(annotations)} {annotation_type} annotations found")
-    for annotation in attendant_annotations:
+    relevant_annotations = [a for a in annotations if a["type"] == annotation_type]
+    logger.info(f"{len(relevant_annotations):,} {annotation_type} annotations found")
+    for annotation in relevant_annotations:
         annotation_id = annotation["id"]
         begin_anchor = annotation["begin_anchor"]
         end_anchor = annotation["end_anchor"]
@@ -255,6 +262,16 @@ def resolution_parameters(annotation: Dict[str, Any]) -> Dict[str, Any]:
     parameters = annotation["metadata"]
     parameters.pop("text_page_num")
     parameters.pop("proposition_origin")
+    if "lang" in parameters:
+        parameters.pop("lang")
+    return parameters
+
+
+def reviewed_parameters(annotation: Dict[str, Any]) -> Dict[str, Any]:
+    parameters = annotation["metadata"]
+    parameters.pop("text_page_num")
+    parameters.pop("page_num")
+    parameters.pop("iiif_url")
     return parameters
 
 
@@ -262,6 +279,7 @@ def paragraph_parameters(annotation: Dict[str, Any]) -> Dict[str, Any]:
     parameters = annotation["metadata"]
     parameters.pop("text_page_num")
     parameters.pop("page_num")
+    parameters.pop("iiif_url")
     return parameters
 
 
@@ -276,7 +294,7 @@ def add_sentence_span(input_doc, sentence_start, token_index):
 def to_pos_token(input_doc, token, word):
     lemma = token.lemma_.strip()
     if not lemma:
-        logger.warning(f"no lemma found, using {word}")
+        logger.warning(f"no lemma found for word '{word}', using '{word}'")
         lemma = word
     pos = token.pos_
     if not pos:
