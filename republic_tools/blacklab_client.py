@@ -88,6 +88,7 @@ class BlackLabClient:
     def get_input_formats(self):
         url = f'{self.base_url}/input-formats'
         response = self.__get(url=url)
+        
         return self.__handle_response(response, {HTTPStatus.OK: lambda r: r.json()})
 
     def get_input_format_configuration(self, format_name: str):
