@@ -30,7 +30,6 @@ facet_names = {
 
 
 def main():
-    global b64
     for path in paths:
         print(f"<= {path}")
         with open(path) as f:
